@@ -407,12 +407,6 @@ export class Game extends Scene {
     if (m.id === 3) {
       this.waterGfx = this.add.graphics().setDepth(2);
     }
-    if (m.id === 1 && this.textures.exists("npc_art")) {
-      for (let i = 0; i < 3; i++) {
-        const npc = this.add.image(420 + i * 380, GH - 88, "npc_art").setDepth(3);
-        this.fitImage(npc, 58);
-      }
-    }
   }
 
   private layer(g: Phaser.GameObjects.Graphics, color: number, w: number, baseY: number, amp: number, accent: number, alpha: number) {
@@ -597,9 +591,9 @@ export class Game extends Scene {
     if (p === "PAUSED") {
       this.phase = "PAUSED";
       this.playing = false;
-      if (this.input.keyboard) this.input.keyboard.enabled = false;
       this.physics.pause();
       this.tweens.pauseAll();
+      this.sound.pauseAll();
     }
   };
 
@@ -647,6 +641,7 @@ export class Game extends Scene {
 
   // ---------- input helpers ----------
   private queueJump() {
+    if (!this.playing) return;
     this.jumpBufferUntil = this.time.now + 120;
   }
 
@@ -849,14 +844,11 @@ export class Game extends Scene {
     if (left && !right) {
       body.setVelocityX(-RUN_V);
       this.player.setFlipX(true);
-      if (this.grounded()) this.player.play("hero_run", true);
     } else if (right && !left) {
       body.setVelocityX(RUN_V);
       this.player.setFlipX(false);
-      if (this.grounded()) this.player.play("hero_run", true);
     } else {
       body.setVelocityX(body.velocity.x * 0.8);
-      if (this.grounded()) { this.player.anims.stop(); this.player.setFrame(12); }
     }
 
     // coyote time bookkeeping + jump counter reset on landing
@@ -872,16 +864,14 @@ export class Game extends Scene {
         this.jumpBufferUntil = 0;
         this.coyoteUntil = 0;
         this.jumpCount = 1;
-        this.safePlay("sfx_jump");
-        this.player.anims.stop();
-        this.player.setFrame(20);
+        this.safePlay("sfx_repair", { volume: 0.25, rate: 1.6 });
+        this.pose = "jump";
       } else if (this.jumpCount === 1) {
         body.setVelocityY(JUMP_V * 0.9);
         this.jumpBufferUntil = 0;
         this.jumpCount = 2;
-        this.safePlay("sfx_jump", { rate: 1.35 });
-        this.player.anims.stop();
-        this.player.setFrame(20);
+        this.safePlay("sfx_repair", { volume: 0.2, rate: 1.9 });
+        this.pose = "jump";
         if (this.textures.exists("spark")) {
           const puff = this.add.image(this.player.x, this.player.y + 20, "spark").setAlpha(0.7).setDepth(4).setScale(0.5);
           this.tweens.add({ targets: puff, alpha: 0, scale: 1.2, y: puff.y + 14, duration: 260, onComplete: () => puff.destroy() });
@@ -893,7 +883,10 @@ export class Game extends Scene {
       body.setVelocityY(body.velocity.y * 0.55);
     }
 
-    if (!this.grounded() && body.velocity.y > 0) this.player.setFrame(21);
+    this.applyTobiPose(time, left !== right && this.grounded());
+    this.followKobo(time);
+    this.tickInteract(delta);
+    this.drawWater(time);
 
     // fell into a pit (world bounds prevent falling below GH, so detect
     // the player resting below the ground surface at GH-40)
@@ -977,6 +970,48 @@ export class Game extends Scene {
         db.setVelocity(0, 0);
       }
     }
+  }
+
+  private applyTobiPose(time: number, running: boolean) {
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    const airborne = !this.grounded();
+    if (airborne) {
+      this.pose = "jump";
+      this.player.setAngle((this.player.flipX ? 1 : -1) * (body.velocity.y < 0 ? 12 : -8));
+    } else if (running) {
+      this.pose = "run";
+      this.player.setAngle(Math.sin(this.runTime / 70) * 8);
+    } else {
+      this.pose = "idle";
+      this.player.setAngle(Math.sin(time / 260) * 2.5);
+    }
+  }
+
+  private followKobo(time: number) {
+    if (!this.kobo) return;
+    const behind = this.player.flipX ? 52 : -52;
+    const tx = this.player.x + behind;
+    const ty = this.player.y - 30 + Math.sin(time / 220) * 8;
+    this.kobo.x += (tx - this.kobo.x) * 0.14;
+    this.kobo.y += (ty - this.kobo.y) * 0.14;
+    this.kobo.setFlipX(this.player.flipX);
+    this.kobo.setAngle(Math.sin(time / 180) * 5);
+  }
+
+  private drawWater(time: number) {
+    if (!this.waterGfx) return;
+    const g = this.waterGfx;
+    g.clear();
+    g.fillStyle(0x0b6a86, 0.38);
+    g.fillRect(0, GH - 52, this.mission.worldW, 52);
+    g.lineStyle(2, 0x4dd0e1, 0.7);
+    g.beginPath();
+    for (let x = 0; x <= this.mission.worldW; x += 16) {
+      const y = GH - 52 + Math.sin(x * 0.02 + time / 240) * 4;
+      if (x === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.strokePath();
   }
 
   private drawBossBar() {

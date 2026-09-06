@@ -149,6 +149,19 @@ export function loadSave(): SaveData {
   return { completed: [], unlocked: [1], bestScores: {}, totalImpact: 0, districtRestored: 0, soundMuted: false };
 }
 
+export function recordMissionComplete(prev: SaveData, r: MissionResult): SaveData {
+  const completed = prev.completed.includes(r.mission) ? prev.completed : [...prev.completed, r.mission];
+  const unlocked = Array.from(new Set([...prev.unlocked, 1, r.mission, Math.min(3, r.mission + 1)]));
+  return {
+    ...prev,
+    completed,
+    unlocked,
+    bestScores: { ...prev.bestScores, [r.mission]: Math.max(prev.bestScores[r.mission] ?? 0, r.score) },
+    totalImpact: prev.totalImpact + r.impact,
+    districtRestored: Math.round((completed.length / 3) * 100),
+  };
+}
+
 export function persistSave(s: SaveData): void {
   try {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(s));

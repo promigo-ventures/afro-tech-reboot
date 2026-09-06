@@ -13,11 +13,13 @@ import {
   EVT_RESTART_MISSION,
   EVT_RESUME,
   EVT_GO_TO_MENU,
-  EVT_START_MISSION,
   EVT_TOGGLE_MUTE,
+  EVT_REPAIR_PROGRESS,
   MISSIONS,
   loadSave,
   persistSave,
+  recordMissionComplete,
+  queueStartMission,
   impactLevel,
   type GamePhase,
   type HudState,
@@ -133,10 +135,10 @@ export default function App() {
   const [save, setSave] = useState<SaveData>(() => loadSave());
   const [result, setResult] = useState<MissionResult | null>(null);
   const [introMission, setIntroMission] = useState<number | null>(null);
-  const [isTouch, setIsTouch] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [isTouch, setIsTouch] = useState(() => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches);
+  const [muted, setMuted] = useState(() => loadSave().soundMuted);
   const [showSettings, setShowSettings] = useState(false);
-  const muteApplied = useRef(false);
+  const [repairProgress, setRepairProgress] = useState(0);
 
   useLayoutEffect(() => {
     const game = StartGame("game-container");
@@ -149,16 +151,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0)) {
-      setIsTouch(true);
-    }
+    const coarse = window.matchMedia("(pointer: coarse)");
+    const sync = () => setIsTouch(coarse.matches || ("ontouchstart" in window && navigator.maxTouchPoints > 0 && !window.matchMedia("(pointer: fine)").matches));
+    sync();
+    coarse.addEventListener("change", sync);
     const onSceneReady = (scene: Phaser.Scene) => {
       phaserRef.current.scene = scene;
-      // Apply persisted mute preference exactly once when the scene is ready.
-      if (!muteApplied.current) {
-        muteApplied.current = true;
-        if (save.soundMuted) EventBus.emit(EVT_TOGGLE_MUTE);
-      }
     };
     const onPhase = (p: GamePhase) => {
       setPhase(p);
@@ -168,12 +166,7 @@ export default function App() {
     const onComplete = (r: MissionResult) => {
       setResult(r);
       setSave((prev) => {
-        const next: SaveData = {
-          completed: prev.completed.includes(r.mission) ? prev.completed : [...prev.completed, r.mission],
-          bestScores: { ...prev.bestScores, [r.mission]: Math.max(prev.bestScores[r.mission] ?? 0, r.score) },
-          totalImpact: prev.totalImpact + r.impact,
-          soundMuted: prev.soundMuted,
-        };
+        const next = recordMissionComplete(prev, r);
         persistSave(next);
         return next;
       });
@@ -187,22 +180,26 @@ export default function App() {
         return next;
       });
     };
+    const onRepair = (v: number) => setRepairProgress(v);
     EventBus.on(EVT_CURRENT_SCENE_READY, onSceneReady);
     EventBus.on(EVT_PHASE_CHANGED, onPhase);
     EventBus.on(EVT_HUD, onHud);
     EventBus.on(EVT_MISSION_COMPLETE, onComplete);
     EventBus.on(EVT_GAME_OVER, onGameOver);
     EventBus.on("mute-state", onMuteState);
+    EventBus.on(EVT_REPAIR_PROGRESS, onRepair);
     setPhase("MENU");
     return () => {
+      coarse.removeEventListener("change", sync);
       EventBus.off(EVT_CURRENT_SCENE_READY, onSceneReady);
       EventBus.off(EVT_PHASE_CHANGED, onPhase);
       EventBus.off(EVT_HUD, onHud);
       EventBus.off(EVT_MISSION_COMPLETE, onComplete);
       EventBus.off(EVT_GAME_OVER, onGameOver);
       EventBus.off("mute-state", onMuteState);
+      EventBus.off(EVT_REPAIR_PROGRESS, onRepair);
     };
-  }, [save.soundMuted]);
+  }, []);
 
   const startMission = (id: number) => {
     setIntroMission(id);
@@ -214,7 +211,7 @@ export default function App() {
     setIntroMission(null);
     setResult(null);
     setPhase("PLAYING");
-    EventBus.emit(EVT_START_MISSION, id);
+    queueStartMission(id);
   };
 
   const togglePause = () => {
@@ -235,7 +232,7 @@ export default function App() {
     EventBus.emit(EVT_GO_TO_MENU);
   };
 
-  const locked = (id: number) => id > 1 && !save.completed.includes(id - 1);
+  const locked = (id: number) => !save.unlocked.includes(id);
   const impact = impactLevel(save.totalImpact);
   const cellLabel = hud ? (MISSIONS[hud.mission - 1]?.cellLabel ?? "Cells") : "Cells";
   const repairLabel = hud ? (MISSIONS[hud.mission - 1]?.repairLabel ?? "Repairs") : "Repairs";
@@ -268,13 +265,31 @@ export default function App() {
       {(phase === "PLAYING" || phase === "PAUSED") && hud && (
         <div id="hud">
           <div className="hud-left">
-            <div className="hud-score">{hud.score.toString().padStart(6, "0")}</div>
-            <div className="hud-hp" aria-label={`Health ${hud.hp} of 3`}>
-              {"♥".repeat(Math.max(0, hud.hp))}{"♡".repeat(Math.max(0, 3 - hud.hp))}
+            <div className="hud-toprow">
+              <div className="hud-hearts" aria-label={`Health ${hud.hp} of 3`}>
+                {[0, 1, 2].map((i) => (
+                  <img
+                    key={i}
+                    className={`hud-heart ${i < hud.hp ? "on" : "off"}`}
+                    src="/assets/ui/heart.png"
+                    alt=""
+                  />
+                ))}
+              </div>
+              <div className="hud-score-block">
+                <span className="score-label">SCORE</span>
+                <span className="score-value">{hud.score.toString().padStart(6, "0")}</span>
+              </div>
             </div>
             <div className="hud-counters">
-              <span className="hud-count">⚡ {cellLabel} {hud.cells}/{hud.cellsTotal}</span>
-              <span className="hud-count">🔧 {repairLabel} {hud.repairs}/{hud.repairsTotal}</span>
+              <span className="hud-count">
+                <img src="/assets/ui/energy.png" alt="" />
+                {cellLabel} {hud.cells}/{hud.cellsTotal}
+              </span>
+              <span className="hud-count">
+                <img src="/assets/ui/repair.png" alt="" />
+                {repairLabel} {hud.repairs}/{hud.repairsTotal}
+              </span>
             </div>
           </div>
           <div className="hud-center">
@@ -282,6 +297,9 @@ export default function App() {
             <div className="hud-objective">{hud.objective}</div>
             {hud.bossHp > 0 && (
               <div className="boss-bar"><div className="boss-fill" style={{ width: `${(hud.bossHp / Math.max(1, hud.bossHpMax)) * 100}%` }} /></div>
+            )}
+            {repairProgress > 0 && (
+              <div className="repair-bar hud-repair"><div className="repair-fill" style={{ width: `${repairProgress * 100}%` }} /><span>HOLD REPAIR</span></div>
             )}
           </div>
           <div className="hud-right">
@@ -300,11 +318,11 @@ export default function App() {
         <div className="overlay menu-overlay">
           <div className="menu-grid">
             <div className="menu-left">
-              <h1 className="title">EKO <span>REBOOT</span></h1>
-              <p className="subtitle">An Afro-Futuristic Platformer</p>
+              <img className="menu-logo" src="/assets/ui/logo.png" alt="EKO REBOOT" />
+              <p className="subtitle">Fix the City. Build the Future.</p>
               <div className="save-stats">
                 <div><span>Impact</span><b className={impact.cls}>{impact.label}</b></div>
-                <div><span>Districts</span><b>{save.completed.length}/3</b></div>
+                <div><span>Districts</span><b>{save.completed.length}/3 · {save.districtRestored}%</b></div>
                 <div><span>Total Best</span><b>{Object.values(save.bestScores).reduce((a, b) => a + b, 0)}</b></div>
               </div>
               <DialogueBox lines={MENU_LINES} onDone={() => setPhase("MENU")} label="Select Mission ▸" />
@@ -357,7 +375,7 @@ export default function App() {
             <ul className="rules">
               <li><b>A / D</b> or <b>← →</b> — run</li>
               <li><b>SPACE / W / ↑</b> — jump (press again mid-air for double jump)</li>
-              <li><b>E / K</b> — repair station & interface with terminal</li>
+              <li><b>E / F</b> — hold to repair station & reboot terminal</li>
               <li><b>P / Esc</b> — pause</li>
               <li><b>Stomp</b> drones from above to destroy them</li>
               <li>Side contact costs 1 HP — you have 3</li>
@@ -388,7 +406,7 @@ export default function App() {
                 <ul className="rules" style={{ textAlign: "left" }}>
                   <li><b>A / D / ← / →</b> — move</li>
                   <li><b>SPACE / W / ↑</b> — jump & double jump</li>
-                  <li><b>E / K</b> — repair / interface</li>
+                  <li><b>E / F</b> — hold to repair / interface</li>
                   <li><b>P / Esc</b> — pause</li>
                 </ul>
                 <button className="cta" onClick={() => setShowSettings(false)}>◂ BACK</button>
@@ -414,9 +432,11 @@ export default function App() {
       {phase === "MISSION_COMPLETE" && result && (
         <div className="overlay">
           <div className="panel center">
-            <h2 className="success">DISTRICT REBOOTED</h2>
-            <p className="impact-line">+{result.impact} IMPACT — {impactLevel(save.totalImpact).label}</p>
+            <img className="complete-badge" src="/assets/ui/mission-complete.png" alt="Mission Complete" />
+            <h2 className="success">MISSION COMPLETE</h2>
+            <p className="impact-line">+{result.impact} IMPACT — District restored</p>
             <p className="score-line">Mission Score {result.score}</p>
+            <p className="unlock-line">City restoration {save.districtRestored}%</p>
             {result.nextUnlocked && <p className="unlock-line">Next district unlocked!</p>}
             <button className="cta" onClick={() => startMission(Math.min(3, result.mission + 1))}>NEXT MISSION ▸</button>
             <button className="cta secondary" onClick={() => { setPhase("PLAYING"); EventBus.emit(EVT_RESTART_MISSION); }}>REPLAY</button>
@@ -429,8 +449,8 @@ export default function App() {
       {phase === "VICTORY_CINEMATIC" && (
         <div className="overlay victory">
           <div className="panel center">
-            <h1 className="title small">EKO <span>REBOOT</span></h1>
-            <h2 className="success">LAGOS SMART CITY RESTORED</h2>
+            <img className="menu-logo" src="/assets/ui/logo.png" alt="EKO REBOOT" />
+            <h2 className="success">EKO CITY RESTORED</h2>
             <DialogueBox lines={VICTORY_LINES} onDone={toMenu} label="Return to Menu ▸" />
             <p className="score-line">Final Impact {save.totalImpact} · Total Best {Object.values(save.bestScores).reduce((a, b) => a + b, 0)}</p>
           </div>
@@ -445,7 +465,7 @@ export default function App() {
             {btn("t-dir", "▶", EVT_SET_TOUCH + "|right")}
           </div>
           <div className="touch-right">
-            <button className="touch-btn t-act" aria-label="Repair" onPointerDown={(e) => { e.preventDefault(); EventBus.emit(EVT_ACTION, true); }} onPointerUp={(e) => { e.preventDefault(); EventBus.emit(EVT_ACTION, false); }} onPointerCancel={() => EventBus.emit(EVT_ACTION, false)} onPointerLeave={() => EventBus.emit(EVT_ACTION, false)}>⚡</button>
+            <button className="touch-btn t-act" aria-label="Repair" onPointerDown={(e) => { e.preventDefault(); EventBus.emit(EVT_ACTION, true); }} onPointerUp={(e) => { e.preventDefault(); EventBus.emit(EVT_ACTION, false); }} onPointerCancel={() => EventBus.emit(EVT_ACTION, false)} onPointerLeave={() => EventBus.emit(EVT_ACTION, false)}>🔧</button>
             <button className="touch-btn t-jump" aria-label="Jump" onPointerDown={(e) => { e.preventDefault(); EventBus.emit(EVT_JUMP, true); }}>▲</button>
           </div>
         </div>
