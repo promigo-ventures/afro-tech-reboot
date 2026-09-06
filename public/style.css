@@ -1,0 +1,439 @@
+:root {
+    --ink: #0b1020;
+    --gold: #ffd600;
+    --teal: #4dd0e1;
+    --magenta: #ff2d95;
+    --panel: rgba(11, 16, 32, 0.82);
+    --panel-border: rgba(77, 208, 225, 0.5);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root,
+#app {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #05070f;
+    font-family: 'Segoe UI', 'Trebuchet MS', system-ui, -apple-system, sans-serif;
+    color: #fff;
+    user-select: none;
+}
+
+#app {
+    position: relative;
+}
+
+/* The Phaser canvas mounts here — MUST have an explicit size. */
+#game-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+#game-container canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* HUD overlay layer */
+#hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+}
+#hud button,
+#hud .panel,
+#hud .touch-btn {
+    pointer-events: auto;
+}
+
+/* ---------- Top HUD bar ---------- */
+.hud-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 10px 12px;
+    gap: 8px;
+    background: linear-gradient(180deg, rgba(5, 7, 15, 0.7), rgba(5, 7, 15, 0));
+}
+.hud-left {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.hud-hearts {
+    display: flex;
+    gap: 2px;
+}
+.hud-counters {
+    display: flex;
+    gap: 6px;
+}
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #eafcff;
+}
+.hud-score {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1;
+}
+.score-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--teal);
+    opacity: 0.8;
+}
+.score-value {
+    font-size: 26px;
+    font-weight: 900;
+    color: var(--gold);
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.hud-right {
+    display: flex;
+    gap: 6px;
+}
+.icon-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+}
+.icon-btn svg {
+    fill: #eafcff;
+}
+.icon-btn:active {
+    transform: scale(0.92);
+}
+
+/* ---------- Dialogue bubble ---------- */
+.dialogue {
+    position: absolute;
+    top: 78px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: min(92%, 560px);
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-left: 5px solid var(--teal);
+    border-radius: 12px;
+    padding: 10px 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    animation: pop 0.25s ease;
+}
+.dialogue.mood-alert {
+    border-left-color: var(--magenta);
+}
+.dialogue.mood-happy {
+    border-left-color: var(--gold);
+}
+.dialogue-speaker {
+    font-weight: 900;
+    color: var(--gold);
+    font-size: 13px;
+    letter-spacing: 1px;
+    white-space: nowrap;
+}
+.dialogue-text {
+    font-size: 14px;
+    line-height: 1.35;
+    color: #f3fbff;
+}
+@keyframes pop {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+/* ---------- Repair prompt ---------- */
+.repair-prompt {
+    position: absolute;
+    bottom: 128px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(80%, 420px);
+    text-align: center;
+}
+.repair-hint {
+    display: inline-block;
+    background: var(--panel);
+    border: 1px solid var(--gold);
+    color: var(--gold);
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 700;
+}
+.repair-bar {
+    position: relative;
+    height: 30px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid var(--teal);
+    overflow: hidden;
+}
+.repair-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(90deg, var(--teal), var(--gold));
+    transition: width 0.1s linear;
+}
+.repair-bar span {
+    position: relative;
+    z-index: 1;
+    display: block;
+    line-height: 30px;
+    font-size: 13px;
+    font-weight: 800;
+    color: #05070f;
+    mix-blend-mode: screen;
+}
+
+/* ---------- Mobile touch controls ---------- */
+.touch-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 18px 20px calc(20px + env(safe-area-inset-bottom));
+}
+/* Hide touch controls on desktop (fine pointer + hover capability) */
+@media (hover: hover) and (pointer: fine) {
+    .touch-controls {
+        display: none;
+    }
+}
+.touch-pad,
+.touch-actions {
+    display: flex;
+    gap: 12px;
+}
+.touch-btn {
+    width: 66px;
+    height: 66px;
+    border-radius: 50%;
+    border: 2px solid var(--panel-border);
+    background: rgba(11, 16, 32, 0.6);
+    color: #eafcff;
+    font-size: 26px;
+    font-weight: 900;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    touch-action: none;
+    backdrop-filter: blur(2px);
+}
+.touch-btn:active {
+    background: rgba(77, 208, 225, 0.35);
+    transform: scale(0.94);
+}
+.jump-btn {
+    width: 78px;
+    height: 78px;
+    color: var(--gold);
+    border-color: var(--gold);
+}
+.repair-btn {
+    width: 62px;
+    height: 62px;
+    color: var(--teal);
+    border-color: var(--teal);
+}
+.repair-btn svg {
+    fill: var(--teal);
+}
+
+/* ---------- Overlays (menu / story / pause / end) ---------- */
+.overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: radial-gradient(circle at 50% 30%, rgba(20, 30, 60, 0.55), rgba(5, 7, 15, 0.9));
+    animation: fade 0.3s ease;
+}
+@keyframes fade {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+.panel {
+    width: min(92%, 560px);
+    max-height: 92%;
+    overflow-y: auto;
+    text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    padding: 30px 26px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.eyebrow {
+    font-size: 12px;
+    letter-spacing: 3px;
+    color: var(--teal);
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+.eyebrow.danger {
+    color: var(--magenta);
+}
+.eyebrow.success {
+    color: var(--gold);
+}
+.title {
+    font-size: clamp(38px, 9vw, 64px);
+    font-weight: 900;
+    letter-spacing: 2px;
+    line-height: 0.95;
+    color: #fff;
+}
+.title span {
+    color: var(--gold);
+    display: block;
+}
+.title-sm {
+    font-size: clamp(24px, 6vw, 34px);
+    font-weight: 900;
+    color: var(--gold);
+    margin-bottom: 8px;
+}
+.tagline {
+    margin-top: 8px;
+    font-size: 16px;
+    color: var(--teal);
+    font-style: italic;
+}
+.blurb {
+    margin: 16px auto;
+    max-width: 46ch;
+    font-size: 14.5px;
+    line-height: 1.5;
+    color: #d7e6f2;
+}
+.blurb strong {
+    color: var(--gold);
+}
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 14px 30px;
+    font-size: 17px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: #05070f;
+    background: linear-gradient(90deg, var(--gold), #ffb300);
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(255, 214, 0, 0.35);
+}
+.btn-primary:active {
+    transform: scale(0.96);
+}
+.btn-primary svg {
+    fill: #05070f;
+}
+.btn-ghost {
+    padding: 14px 26px;
+    font-size: 15px;
+    font-weight: 800;
+    color: #eafcff;
+    background: transparent;
+    border: 2px solid var(--panel-border);
+    border-radius: 999px;
+    cursor: pointer;
+}
+.btn-ghost:active {
+    transform: scale(0.96);
+}
+.btn-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+.hint {
+    margin-top: 16px;
+    font-size: 12px;
+    color: rgba(215, 230, 242, 0.6);
+}
+
+@media (max-width: 520px) {
+    .touch-btn {
+        width: 60px;
+        height: 60px;
+        font-size: 22px;
+    }
+    .jump-btn {
+        width: 70px;
+        height: 70px;
+    }
+    .panel {
+        padding: 24px 18px;
+    }
+}
+/* High-contrast icon button override (mute/pause visibility) */
+.icon-btn {
+  background: rgba(15, 30, 55, 0.92) !important;
+  border: 1.5px solid #4dd0e1 !important;
+  box-shadow: 0 0 8px rgba(77, 208, 225, 0.35), 0 2px 6px rgba(0, 0, 0, 0.45) !important;
+  color: #eafcff !important;
+}
+.icon-btn svg {
+  fill: #eafcff;
+}
+.icon-btn:hover,
+.icon-btn:focus-visible {
+  border-color: #80deea !important;
+  box-shadow: 0 0 12px rgba(128, 222, 234, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45) !important;
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
