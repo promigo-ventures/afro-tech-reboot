@@ -18,6 +18,25 @@ export const EVT_RESUME = "resume";
 export const EVT_GO_TO_MENU = "go-to-menu";
 export const EVT_START_MISSION = "start-mission";
 export const EVT_TOGGLE_MUTE = "toggle-mute";
+export const EVT_REPAIR_PROGRESS = "repair-progress";
+
+/** Mission id requested before the Phaser scene is listening. */
+let queuedMissionId: number | null = null;
+
+export function queueStartMission(id: number): void {
+  queuedMissionId = id;
+  EventBus.emit(EVT_START_MISSION, id);
+}
+
+export function takeQueuedMission(): number | null {
+  const id = queuedMissionId;
+  queuedMissionId = null;
+  return id;
+}
+
+export function peekQueuedMission(): number | null {
+  return queuedMissionId;
+}
 
 /* ── Shared types ────────────────────────────────────────────────── */
 export type GamePhase =
@@ -95,8 +114,10 @@ export const MISSIONS: MissionDef[] = [
 /* ── Persistent save (localStorage) ──────────────────────────────── */
 export interface SaveData {
   completed: number[];
+  unlocked: number[];
   bestScores: Record<number, number>;
   totalImpact: number;
+  districtRestored: number;
   soundMuted: boolean;
 }
 
@@ -107,17 +128,25 @@ export function loadSave(): SaveData {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (raw) {
       const d = JSON.parse(raw) as Partial<SaveData>;
+      const completed = Array.isArray(d.completed) ? d.completed : [];
+      const unlocked = Array.isArray(d.unlocked) && d.unlocked.length
+        ? d.unlocked
+        : [1, ...completed.map((id) => id + 1).filter((id) => id <= 3)];
       return {
-        completed: Array.isArray(d.completed) ? d.completed : [],
+        completed,
+        unlocked: Array.from(new Set([1, ...unlocked])).filter((id) => id >= 1 && id <= 3),
         bestScores: d.bestScores && typeof d.bestScores === "object" ? d.bestScores : {},
         totalImpact: typeof d.totalImpact === "number" ? d.totalImpact : 0,
+        districtRestored: typeof d.districtRestored === "number"
+          ? d.districtRestored
+          : Math.round((completed.length / 3) * 100),
         soundMuted: d.soundMuted === true,
       };
     }
   } catch {
     /* corrupted save — start fresh */
   }
-  return { completed: [], bestScores: {}, totalImpact: 0, soundMuted: false };
+  return { completed: [], unlocked: [1], bestScores: {}, totalImpact: 0, districtRestored: 0, soundMuted: false };
 }
 
 export function persistSave(s: SaveData): void {
@@ -151,6 +180,8 @@ export const StartGame = (parent: string): PhaserGame => {
       default: "arcade",
       arcade: { gravity: { x: 0, y: 900 }, debug: false },
     },
+    input: { keyboard: true, mouse: true, touch: true },
+    audio: { disableWebAudio: false },
     roundPixels: true,
     scene: [Game],
   });

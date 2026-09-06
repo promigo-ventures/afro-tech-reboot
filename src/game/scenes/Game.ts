@@ -4,7 +4,9 @@ import {
   EventBus, EVT_PHASE_CHANGED, EVT_HUD, EVT_MISSION_COMPLETE, EVT_GAME_OVER,
   EVT_CURRENT_SCENE_READY, EVT_SET_TOUCH, EVT_JUMP, EVT_ACTION,
   EVT_RESTART_MISSION, EVT_RESUME, EVT_GO_TO_MENU, EVT_START_MISSION, EVT_TOGGLE_MUTE,
-  MISSIONS, type GamePhase, type HudState, type MissionDef, type MissionResult,
+  EVT_REPAIR_PROGRESS,
+  MISSIONS, loadSave, persistSave, peekQueuedMission, takeQueuedMission,
+  type GamePhase, type HudState, type MissionDef, type MissionResult,
 } from "../main";
 
 const GW = 960, GH = 540;
@@ -74,26 +76,40 @@ export class Game extends Scene {
   private terminalGfx!: Phaser.GameObjects.Graphics;
   private bgm: Phaser.Sound.BaseSound | null = null;
   private bgmKey = "";
+  private kobo!: Phaser.GameObjects.Image;
+  private repairHold = 0;
+  private waterGfx?: Phaser.GameObjects.Graphics;
+  private pose: "idle" | "run" | "jump" = "idle";
 
   constructor() { super("Game"); }
 
+  init(data: { missionId?: number } = {}) {
+    const queued = peekQueuedMission();
+    const id = data.missionId ?? queued ?? undefined;
+    if (id) {
+      this.mission = MISSIONS.find((mm) => mm.id === id) || MISSIONS[0];
+      this.pendingStart = true;
+    }
+  }
+
   preload() {
-    this.load.image("tile_ground_src", "assets/2D-assets/Pixel_Adventure/Tilemap/tiles_packed.png");
-    this.load.spritesheet("hero", "assets/2D-assets/Pixel_Adventure/Characters/hero.png", { frameWidth: 32, frameHeight: 48 });
-    this.load.spritesheet("drone", "assets/2D-assets/Pixel_Adventure/Enemies/blob.png", { frameWidth: 32, frameHeight: 32 });
-    this.load.image("cell_src", "assets/2D-assets/Pixel_Adventure/Objects/chest_unopened.png");
-    this.load.image("spark", "assets/fx/spark.png");
-    this.load.image("glow", "assets/fx/glow.png");
-    this.load.audio("sfx_jump", "assets/audio/sfx_jump.mp3");
+    this.load.image("tobi", "assets/chars/tobi.png");
+    this.load.image("kobo", "assets/chars/kobo.jpg");
+    this.load.image("drone_art", "assets/chars/drone.jpg");
+    this.load.image("npc_art", "assets/chars/npcs.jpg");
+    this.load.image("bg_market", "assets/bg/market.png");
+    this.load.image("bg_solar", "assets/bg/solar.webp");
+    this.load.image("bg_water", "assets/bg/waterfront.png");
+    this.load.image("icon_energy", "assets/ui/energy.png");
+    this.load.image("icon_repair", "assets/ui/repair.png");
     this.load.audio("sfx_collect", "assets/audio/sfx_collect.mp3");
     this.load.audio("sfx_hit", "assets/audio/sfx_hit.mp3");
-    this.load.audio("sfx_button", "assets/audio/sfx_button.mp3");
-    this.load.audio("sfx_win", "assets/audio/sfx_win.mp3");
+    this.load.audio("sfx_drone", "assets/audio/sfx_drone.mp3");
     this.load.audio("sfx_gameover", "assets/audio/sfx_gameover.mp3");
-    this.load.audio("sfx_powerup", "assets/audio/sfx_powerup.mp3");
-    this.load.audio("sfx_explosion", "assets/audio/sfx_hit.mp3");
-    this.load.audio("bgm_chill", "assets/audio/bgm_chill.mp3");
-    this.load.audio("bgm_action", "assets/audio/bgm_action.mp3");
+    this.load.audio("sfx_repair", "assets/audio/sfx_repair.mp3");
+    this.load.audio("bgm_menu", "assets/audio/bgm_menu.mp3");
+    this.load.audio("bgm_mission", "assets/audio/bgm_mission.mp3");
+    this.load.audio("bgm_victory", "assets/audio/bgm_victory.mp3");
   }
 
   create() {
@@ -119,6 +135,12 @@ export class Game extends Scene {
     this.lastHud = 0;
     this.objectiveText = "";
     this.terminalX = 0;
+    this.repairHold = 0;
+    this.pose = "idle";
+    this.waterGfx = undefined;
+
+    this.sound.mute = loadSave().soundMuted;
+    EventBus.emit("mute-state", this.sound.mute);
 
     this.createTextures();
     this.createAnims();
@@ -133,18 +155,27 @@ export class Game extends Scene {
     this.buildTerminal();
     this.updateObjective();
 
-    this.player = this.physics.add.sprite(80, GH - 140, "hero");
+    const heroKey = this.textures.exists("tobi") ? "tobi" : "hero";
+    this.player = this.physics.add.sprite(80, GH - 140, heroKey);
     this.player.setDepth(5);
-    this.player.setSize(22, 44);
+    this.fitSprite(this.player, 70);
+    const pb = this.player.body as Phaser.Physics.Arcade.Body;
+    pb.setSize(this.player.width * 0.42, this.player.height * 0.78);
     this.player.setCollideWorldBounds(true);
-    this.player.play("hero_idle", true);
-    this.player.anims.stop();
-    this.player.setFrame(12);
+
+    this.kobo = this.add.image(40, GH - 180, this.textures.exists("kobo") ? "kobo" : "drone");
+    this.kobo.setDepth(6);
+    this.fitImage(this.kobo, 42);
 
     this.bossBar = this.add.graphics().setScrollFactor(0).setDepth(50);
 
-    this.cursors = this.input.keyboard!.createCursorKeys();
-    this.keys = this.input.keyboard!.addKeys("A,D,W,S,SPACE,E,R,K,P,ESC") as { [k: string]: Phaser.Input.Keyboard.Key };
+    const kb = this.input.keyboard;
+    if (!kb) {
+      throw new Error("Keyboard plugin is not enabled");
+    }
+    kb.addCapture("SPACE,UP,DOWN,LEFT,RIGHT");
+    this.cursors = kb.createCursorKeys();
+    this.keys = kb.addKeys("A,D,W,S,SPACE,E,F,R,K,P,ESC") as { [k: string]: Phaser.Input.Keyboard.Key };
 
     this.physics.add.collider(this.player, this.platforms);
     for (const mp of this.movingPlats) this.physics.add.collider(this.player, mp.sp);
@@ -155,10 +186,9 @@ export class Game extends Scene {
     this.input.keyboard!.on("keydown-SPACE", () => this.queueJump());
     this.input.keyboard!.on("keydown-W", () => this.queueJump());
     this.input.keyboard!.on("keydown-UP", () => this.queueJump());
-    this.input.keyboard!.on("keydown-E", () => this.doAction());
-    this.input.keyboard!.on("keydown-K", () => this.doAction());
     this.input.keyboard!.on("keydown-P", () => this.togglePause());
     this.input.keyboard!.on("keydown-ESC", () => this.togglePause());
+    this.input.once("pointerdown", () => this.sound.unlock());
 
     EventBus.on(EVT_SET_TOUCH, this.onTouch);
     EventBus.on(EVT_JUMP, this.onTouchJump);
@@ -187,11 +217,25 @@ export class Game extends Scene {
 
     EventBus.emit(EVT_CURRENT_SCENE_READY, this);
     this.pushHud(true);
-    this.playBgm("bgm_chill");
-    if (this.pendingStart) {
+    const shouldPlay = this.pendingStart || peekQueuedMission() !== null;
+    if (shouldPlay) {
       this.pendingStart = false;
+      takeQueuedMission();
       this.setPhase("PLAYING");
+    } else {
+      this.physics.pause();
+      this.playBgm("bgm_menu");
     }
+  }
+
+  private fitSprite(sp: Phaser.Physics.Arcade.Sprite, targetH: number) {
+    if (!sp.height) return;
+    sp.setScale(targetH / sp.height);
+  }
+
+  private fitImage(img: Phaser.GameObjects.Image, targetH: number) {
+    if (!img.height) return;
+    img.setScale(targetH / img.height);
   }
 
   // ---------- texture helpers ----------
@@ -226,6 +270,10 @@ export class Game extends Scene {
     mk("pad_glow", 56, 56, (g) => {
       g.fillStyle(0xffb347, 0.25).fillCircle(28, 28, 26);
       g.lineStyle(3, 0xffd54f, 1).strokeCircle(28, 28, 20);
+    });
+    mk("spark", 8, 8, (g) => {
+      g.fillStyle(0xffd54f, 1).fillCircle(4, 4, 4);
+      g.fillStyle(0xffffff, 0.9).fillCircle(4, 4, 2);
     });
     // Procedural hero spritesheet (32x48 per frame, 22 frames). The hero.png
     // asset is a 1x1 placeholder, so we build a real canvas spritesheet. Each
@@ -350,6 +398,21 @@ export class Game extends Scene {
     this.layer(this.add.graphics().setScrollFactor(0.15).setDepth(-8), 0x141228, m.worldW, 300, 60, accent, 0.15);
     this.layer(this.add.graphics().setScrollFactor(0.35).setDepth(-7), 0x1d1a35, m.worldW, 350, 90, accent, 0.25);
     this.layer(this.add.graphics().setScrollFactor(0.6).setDepth(-6), 0x262045, m.worldW, 400, 70, accent, 0.35);
+
+    const bgKey = m.id === 2 ? "bg_solar" : m.id === 3 ? "bg_water" : "bg_market";
+    if (this.textures.exists(bgKey)) {
+      const art = this.add.tileSprite(0, 0, m.worldW, GH, bgKey).setOrigin(0, 0).setScrollFactor(0.22).setDepth(-5).setAlpha(0.55);
+      art.setTileScale(GH / Math.max(1, this.textures.get(bgKey).getSourceImage().height));
+    }
+    if (m.id === 3) {
+      this.waterGfx = this.add.graphics().setDepth(2);
+    }
+    if (m.id === 1 && this.textures.exists("npc_art")) {
+      for (let i = 0; i < 3; i++) {
+        const npc = this.add.image(420 + i * 380, GH - 88, "npc_art").setDepth(3);
+        this.fitImage(npc, 58);
+      }
+    }
   }
 
   private layer(g: Phaser.GameObjects.Graphics, color: number, w: number, baseY: number, amp: number, accent: number, alpha: number) {
@@ -449,7 +512,9 @@ export class Game extends Scene {
     for (let i = 0; i < m.cells; i++) {
       const cx = 700 + (usable / m.cells) * i + Phaser.Math.Between(-30, 30);
       const cy = GH - 200 - Phaser.Math.Between(0, 90);
-      const sp = this.add.image(cx, cy, "cell").setScale(0.7).setDepth(4);
+      const cellKey = this.textures.exists("icon_energy") ? "icon_energy" : "cell";
+      const sp = this.add.image(cx, cy, cellKey).setDepth(4);
+      if (sp.height > 36) sp.setScale(36 / sp.height);
       const label = this.add.text(cx, cy - 30, m.cellLabel.toUpperCase(), { fontSize: "10px", color: "#ffd54f", fontFamily: "monospace" }).setOrigin(0.5).setDepth(4).setAlpha(0);
       this.tweens.add({ targets: sp, y: cy - 8, duration: 1200, yoyo: true, repeat: -1, ease: "Sine.InOut" });
       this.cells.push({ sp, label, x: cx, y: cy, installed: false });
@@ -492,10 +557,14 @@ export class Game extends Scene {
   }
 
   private spawnDrone(x: number, y: number, range: number, speed: number, hp: number, isBoss: boolean): Drone {
-    const sp = this.physics.add.sprite(x, y, "drone");
-    sp.play("drone_fly");
+    const key = this.textures.exists("drone_art") ? "drone_art" : "drone";
+    const sp = this.physics.add.sprite(x, y, key);
+    if (this.anims.exists("drone_fly") && key === "drone") sp.play("drone_fly");
     (sp.body as Phaser.Physics.Arcade.Body).allowGravity = false;
-    sp.setDepth(4).setScale(isBoss ? 1.4 : 1);
+    this.fitSprite(sp, isBoss ? 92 : 48);
+    const db = sp.body as Phaser.Physics.Arcade.Body;
+    db.setSize(sp.width * 0.55, sp.height * 0.5);
+    sp.setDepth(4);
     let laser: Phaser.GameObjects.Rectangle | undefined;
     if (isBoss) laser = this.add.rectangle(x, y + 14, 300, 6, 0xff2d55, 0.85).setOrigin(0, 0.5).setDepth(4).setVisible(false);
     const d: Drone = {
@@ -519,10 +588,19 @@ export class Game extends Scene {
   private onMenu = () => this.setPhase("MENU");
   private onToggleMute = () => {
     this.sound.mute = !this.sound.mute;
+    const save = loadSave();
+    save.soundMuted = this.sound.mute;
+    persistSave(save);
     EventBus.emit("mute-state", this.sound.mute);
   };
   private onReactPhase = (p: GamePhase) => {
-    if (p === "PAUSED" && this.playing) { this.playing = false; this.physics.pause(); this.tweens.pauseAll(); }
+    if (p === "PAUSED") {
+      this.phase = "PAUSED";
+      this.playing = false;
+      if (this.input.keyboard) this.input.keyboard.enabled = false;
+      this.physics.pause();
+      this.tweens.pauseAll();
+    }
   };
 
   private togglePause() {
@@ -534,17 +612,18 @@ export class Game extends Scene {
   public startMission(id: number) {
     this.mission = MISSIONS.find((mm) => mm.id === id) || MISSIONS[0];
     this.pendingStart = true;
-    this.scene.restart({ missionId: id });
+    this.time.delayedCall(0, () => this.scene.restart({ missionId: id }));
   }
 
   public setPhase(p: GamePhase) {
     this.phase = p;
     if (p === "PLAYING") {
       this.playing = true;
+      if (this.input.keyboard) this.input.keyboard.enabled = true;
       this.physics.resume();
       this.tweens.resumeAll();
       this.sound.resumeAll();
-      this.playBgm("bgm_action");
+      this.playBgm("bgm_mission");
     } else if (p === "PAUSED") {
       this.playing = false;
       this.physics.pause();
@@ -552,11 +631,15 @@ export class Game extends Scene {
       this.sound.pauseAll();
     } else if (p === "MENU") {
       this.playing = false;
-      this.physics.resume();
+      this.physics.pause();
       this.tweens.resumeAll();
       this.sound.resumeAll();
-      this.playBgm("bgm_chill");
-    } else if (p === "GAME_OVER" || p === "MISSION_COMPLETE" || p === "VICTORY_CINEMATIC") {
+      this.playBgm("bgm_menu");
+    } else if (p === "MISSION_COMPLETE" || p === "VICTORY_CINEMATIC") {
+      this.playing = false;
+      this.playBgm("bgm_victory");
+    } else if (p === "GAME_OVER") {
+      this.playing = false;
       this.stopBgm();
     }
     EventBus.emit(EVT_PHASE_CHANGED, p);
@@ -590,74 +673,90 @@ export class Game extends Scene {
 
   private doAction() {
     if (!this.playing) return;
+    this.tickInteract(16);
+  }
+
+  private holdingAction(): boolean {
+    return this.actionHeld || !!this.keys?.E?.isDown || !!this.keys?.F?.isDown || !!this.keys?.K?.isDown;
+  }
+
+  private collectNearbyCells() {
     const px = this.player.x, py = this.player.y;
-    // install cell
     for (const c of this.cells) {
-      if (!c.installed && Phaser.Math.Distance.Between(px, py, c.x, c.y) < 70) {
+      if (c.installed) continue;
+      if (Phaser.Math.Distance.Between(px, py, c.x, c.y) < 48) {
         c.installed = true;
         this.installed++;
         this.score += 100;
-        this.safePlay("sfx_powerup");
+        this.safePlay("sfx_collect");
         this.tweens.add({ targets: c.sp, alpha: 0, y: c.y - 40, duration: 500, onComplete: () => c.sp.setVisible(false) });
         c.label.setText("ONLINE").setColor("#4fffc9").setAlpha(1).setY(c.y - 34);
         this.pushHud(true);
         this.checkWin();
-        return;
       }
     }
-    // repair pad
+  }
+
+  private completeNearestPad() {
+    const px = this.player.x, py = this.player.y;
     for (const pad of this.pads) {
       if (!pad.done && Math.abs(px - pad.x) < 50 && py > pad.y - 70) {
         pad.done = true;
         this.repaired++;
         this.score += 80;
-        this.safePlay("sfx_collect");
+        this.safePlay("sfx_repair");
         this.pushHud(true);
         this.checkWin();
         return;
       }
     }
-    // reach the terminal (final step)
+  }
+
+  private completeTerminal() {
+    this.score += this.mission.score + this.mission.impact;
+    this.playing = false;
+    this.safePlay("sfx_repair");
+    EventBus.emit(EVT_MISSION_COMPLETE, {
+      mission: this.mission.id,
+      score: this.score,
+      impact: this.mission.impact,
+      nextUnlocked: this.mission.id < MISSIONS.length,
+    } as MissionResult);
+    this.setPhase(this.mission.id >= MISSIONS.length ? "VICTORY_CINEMATIC" : "MISSION_COMPLETE");
+  }
+
+  private tickInteract(delta: number) {
+    if (!this.playing) return;
+    this.collectNearbyCells();
+    if (!this.holdingAction()) {
+      this.repairHold = 0;
+      EventBus.emit(EVT_REPAIR_PROGRESS, 0);
+      return;
+    }
+    const px = this.player.x, py = this.player.y;
+    let kind: "pad" | "terminal" | null = null;
+    for (const pad of this.pads) {
+      if (!pad.done && Math.abs(px - pad.x) < 50 && py > pad.y - 70) kind = "pad";
+    }
     const cellsLeft = this.cells.some((c) => !c.installed);
     const padsLeft = this.pads.some((p) => !p.done);
     const bossLeft = this.mission.boss && this.boss !== null && this.boss.alive;
     if (!cellsLeft && !padsLeft && !bossLeft && this.terminalX > 0) {
-      if (Phaser.Math.Distance.Between(px, py, this.terminalX, GH - 90) < 90) {
-        this.score += this.mission.score + this.mission.impact;
-        this.playing = false;
-        this.safePlay("sfx_win");
-        EventBus.emit(EVT_MISSION_COMPLETE, {
-          mission: this.mission.id,
-          score: this.score,
-          impact: this.mission.impact,
-          nextUnlocked: this.mission.id < MISSIONS.length,
-        } as MissionResult);
-        this.setPhase(this.mission.id >= MISSIONS.length ? "VICTORY_CINEMATIC" : "MISSION_COMPLETE");
-        return;
-      }
+      if (Phaser.Math.Distance.Between(px, py, this.terminalX, GH - 90) < 90) kind = "terminal";
     }
-    // melee / shoot boss
-    for (const d of this.drones) {
-      if (!d.alive && !d.isBoss) continue;
-      if (d.alive && Phaser.Math.Distance.Between(px, py, d.sp.x, d.sp.y) < 64) {
-        d.hp--;
-        this.safePlay("sfx_hit");
-        this.cameras.main.shake(80, 0.004);
-        d.sp.setTint(0xff6666);
-        this.time.delayedCall(120, () => d.sp.clearTint());
-        if (d.hp <= 0) {
-          d.alive = false;
-          this.score += d.isBoss ? 500 : 120;
-          this.burst(d.sp.x, d.sp.y);
-          if (d.isBoss) {
-            d.laser?.setVisible(false);
-          }
-          this.tweens.add({ targets: d.sp, alpha: 0, scale: d.sp.scale * 1.6, angle: 180, duration: 420, onComplete: () => d.sp.destroy() });
-          this.pushHud(true);
-          this.checkWin();
-        }
-        return;
-      }
+    if (!kind) {
+      this.repairHold = 0;
+      EventBus.emit(EVT_REPAIR_PROGRESS, 0);
+      return;
+    }
+    const need = kind === "terminal" ? 1100 : 850;
+    this.repairHold += delta;
+    EventBus.emit(EVT_REPAIR_PROGRESS, Math.min(1, this.repairHold / need));
+    if (this.repairHold >= need) {
+      this.repairHold = 0;
+      EventBus.emit(EVT_REPAIR_PROGRESS, 0);
+      if (kind === "pad") this.completeNearestPad();
+      else this.completeTerminal();
     }
   }
 
