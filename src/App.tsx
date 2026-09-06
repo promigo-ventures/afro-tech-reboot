@@ -1,376 +1,455 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import StartGame, {
-    EventBus,
-    EV_PHASE,
-    EV_SCENE_READY,
-    EV_HUD,
-    EV_DIALOGUE,
-    EV_START_MISSION,
-    EV_TOGGLE_PAUSE,
-    EV_RESTART,
-    EV_TRIGGER_REPAIR,
-    EV_TOGGLE_AUDIO,
-    type HudState,
-} from './game/main';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from "react";
+import {
+  StartGame,
+  EventBus,
+  EVT_PHASE_CHANGED,
+  EVT_CURRENT_SCENE_READY,
+  EVT_HUD,
+  EVT_MISSION_COMPLETE,
+  EVT_GAME_OVER,
+  EVT_SET_TOUCH,
+  EVT_JUMP,
+  EVT_ACTION,
+  EVT_RESTART_MISSION,
+  EVT_RESUME,
+  EVT_GO_TO_MENU,
+  EVT_START_MISSION,
+  EVT_TOGGLE_MUTE,
+  MISSIONS,
+  loadSave,
+  persistSave,
+  impactLevel,
+  type GamePhase,
+  type HudState,
+  type MissionResult,
+  type SaveData,
+} from "./game/main";
 
 export interface IRefPhaserGame {
-    game: Phaser.Game | null;
-    scene: Phaser.Scene | null;
+  game: Phaser.Game | null;
+  scene: Phaser.Scene | null;
 }
 
 interface Dialogue {
-    speaker: string;
-    text: string;
-    mood?: string;
+  speaker: string;
+  text: string;
 }
 
-const EMPTY_HUD: HudState = {
-    hp: 3,
-    maxHp: 3,
-    energyCells: 0,
-    totalEnergyCells: 6,
-    repairParts: 0,
-    totalRepairParts: 4,
-    score: 0,
-    canRepair: false,
-    repairProgress: 0,
-    terminalFixed: false,
+const MENU_LINES: Dialogue[] = [
+  { speaker: "ZURI", text: "Eko City is dying — its grid, its markets, its water. The old systems were never rebooted." },
+  { speaker: "ZURI", text: "You are the last engineer. Three districts. Three chances to bring them back to life." },
+  { speaker: "EKO", text: "Systems nominal. Let's get to work." },
+];
+
+const MISSION_INTRO: Record<number, Dialogue[]> = {
+  1: [
+    { speaker: "ZURI", text: "Mission 1 — Smart Market. The Old Quarter's sensor mesh is offline. Collect 5 Energy Cells." },
+    { speaker: "EKO", text: "Drones patrol the rooftops. Land on them from above to neutralize them." },
+    { speaker: "ZURI", text: "Repair 3 parts, then reach the Smart Market Terminal and hold [E] to reboot the network." },
+  ],
+  2: [
+    { speaker: "ZURI", text: "Mission 2 — Solar Grid. The rooftop array is starving for power. Recover 8 Solar Cores." },
+    { speaker: "EKO", text: "Energy bridges flicker in and out. Time your crossings." },
+    { speaker: "ZURI", text: "Repair the 3 Solar Stations, then interface with the grid terminal." },
+  ],
+  3: [
+    { speaker: "ZURI", text: "Mission 3 — Waterfront. The AI purification plant is under lockdown. Install 10 Network Chips." },
+    { speaker: "EKO", text: "An Elite Drone guards the terminal. Six stomps to take it down." },
+    { speaker: "ZURI", text: "Reboot the Central AI Terminal, Eko. The city is watching." },
+  ],
 };
 
-// Inline SVG icons (no icon library allowed).
-const IconCell = () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-        <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" fill="#ffd600" stroke="#7a5b00" strokeWidth="1" />
-    </svg>
-);
-const IconPart = () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-        <path
-            d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2-.4a7 7 0 00-.6-1.5l1-1.8-1.7-1.7-1.8 1a7 7 0 00-1.5-.6L14 3h-4l-.4 2a7 7 0 00-1.5.6l-1.8-1L4.6 6.3l1 1.8A7 7 0 005 9.6L3 10v4l2 .4a7 7 0 00.6 1.5l-1 1.8 1.7 1.7 1.8-1a7 7 0 001.5.6L10 21h4l.4-2a7 7 0 001.5-.6l1.8 1 1.7-1.7-1-1.8a7 7 0 00.6-1.5L21 14z"
-            fill="#4dd0e1"
-            stroke="#083344"
-            strokeWidth="0.8"
-        />
-    </svg>
-);
-const IconHeart = ({ filled }: { filled: boolean }) => (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-        <path
-            d="M12 21s-7-4.6-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.4 12 21 12 21z"
-            fill={filled ? '#ff1744' : 'rgba(255,255,255,0.18)'}
-            stroke={filled ? '#7a0010' : 'rgba(255,255,255,0.4)'}
-            strokeWidth="1"
-        />
-    </svg>
-);
-const IconPause = () => (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-        <rect x="6" y="5" width="4" height="14" rx="1" fill="#eafcff" />
-        <rect x="14" y="5" width="4" height="14" rx="1" fill="#eafcff" />
-    </svg>
-);
-const IconPlay = () => (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-        <path d="M7 4v16l13-8z" fill="#eafcff" />
-    </svg>
-);
-const IconSound = ({ muted }: { muted: boolean }) => (
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-        <path d="M4 9v6h4l5 4V5L8 9H4z" fill="#eafcff" />
-        {muted ? (
-            <path d="M16 9l5 6M21 9l-5 6" stroke="#eafcff" strokeWidth="2" fill="none" strokeLinecap="round" />
-        ) : (
-            <path d="M16 8a5 5 0 010 8M18.5 6a8 8 0 010 12" stroke="#eafcff" strokeWidth="2" fill="none" strokeLinecap="round" />
-        )}
-    </svg>
-);
-const IconWrench = () => (
-    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-        <path
-            d="M21 6.5a5 5 0 01-6.6 6.6L7 20.5 3.5 17l7.4-7.4A5 5 0 0117.5 3l-3 3 1 3 3 1 2.5-3.5z"
-            fill="#eafcff"
-        />
-    </svg>
-);
+const VICTORY_LINES: Dialogue[] = [
+  { speaker: "ZURI", text: "All three districts are online. The grid is humming again." },
+  { speaker: "EKO", text: "This is just the beginning. Eko City will shine again." },
+  { speaker: "ZURI", text: "Impact Level: ECOLOGICAL BALANCE ACHIEVED." },
+];
 
-function App() {
-    const phaserRef = useRef<IRefPhaserGame | null>(null);
-    const [phase, setPhase] = useState<string>('MENU');
-    const [hud, setHud] = useState<HudState>(EMPTY_HUD);
-    const [dialogue, setDialogue] = useState<Dialogue | null>(null);
-    const [muted, setMuted] = useState(false);
-    const dialogueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    // Mount the Phaser game into #game-container exactly once; destroy on unmount.
-    useLayoutEffect(() => {
-        if (phaserRef.current === null) {
-            const game = StartGame('game-container');
-            phaserRef.current = { game, scene: null };
+function Typewriter({ line }: { line: Dialogue }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    setShown(0);
+    const id = window.setInterval(() => {
+      setShown((s) => {
+        if (s >= line.text.length) {
+          window.clearInterval(id);
+          return s;
         }
-        const readyHandler = (scene: Phaser.Scene) => {
-            if (phaserRef.current) phaserRef.current.scene = scene;
-        };
-        EventBus.on('current-scene-ready', readyHandler);
-        return () => {
-            EventBus.removeListener('current-scene-ready', readyHandler);
-            if (phaserRef.current) {
-                phaserRef.current.game?.destroy(true);
-                phaserRef.current = null;
-            }
-        };
-    }, []);
-
-    // Subscribe to scene -> React state.
-    useEffect(() => {
-        const onPhase = (p: string) => setPhase(p);
-        const onHud = (s: HudState) => setHud(s);
-        const onDialogue = (d: Dialogue) => {
-            setDialogue(d);
-            if (dialogueTimer.current) clearTimeout(dialogueTimer.current);
-            dialogueTimer.current = setTimeout(() => setDialogue(null), 4200);
-        };
-        EventBus.on(EV_PHASE, onPhase);
-        EventBus.on(EV_HUD, onHud);
-        EventBus.on(EV_DIALOGUE, onDialogue);
-        return () => {
-            EventBus.removeListener(EV_PHASE, onPhase);
-            EventBus.removeListener(EV_HUD, onHud);
-            EventBus.removeListener(EV_DIALOGUE, onDialogue);
-            if (dialogueTimer.current) clearTimeout(dialogueTimer.current);
-        };
-    }, []);
-
-    const playing = phase === 'PLAYING' || phase === 'REPAIRING';
-
-    const startMission = () => EventBus.emit(EV_START_MISSION);
-    const resume = () => EventBus.emit(EV_TOGGLE_PAUSE);
-    const pause = () => EventBus.emit(EV_TOGGLE_PAUSE);
-    const restart = () => EventBus.emit(EV_RESTART);
-    const toggleAudio = () => {
-        const next = !muted;
-        setMuted(next);
-        EventBus.emit(EV_TOGGLE_AUDIO, { muted: next });
-    };
-
-    // Touch controls -> scene.
-    const moveDir = (dir: number) => EventBus.emit('touch-move', dir);
-    const jumpPress = (press: boolean) => EventBus.emit('touch-jump', press);
-    const repairPress = (press: boolean) => EventBus.emit(EV_TRIGGER_REPAIR, press);
-
-    // Prevent touch buttons from also firing keyboard/click handlers or scrolling.
-    const noGhost = (e: RPointerEvent) => {
-        e.preventDefault();
-        (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
-    };
-
-    const hearts = [];
-    for (let i = 0; i < hud.maxHp; i++) hearts.push(<IconHeart key={i} filled={i < hud.hp} />);
-
-    return (
-        <div id="app">
-            {/* The Phaser canvas mounts into #game-container (src/game/main.ts). */}
-            <div id="game-container"></div>
-
-            <div id="hud">
-                {/* ---------- Top HUD bar (only during play) ---------- */}
-                {playing && (
-                    <div className="hud-top">
-                        <div className="hud-left">
-                            <div className="hud-hearts">{hearts}</div>
-                            <div className="hud-counters">
-                                <span className="chip">
-                                    <IconCell /> {hud.energyCells}/{hud.totalEnergyCells}
-                                </span>
-                                <span className="chip">
-                                    <IconPart /> {hud.repairParts}/{hud.totalRepairParts}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="hud-score">
-                            <span className="score-label">SCORE</span>
-                            <span className="score-value">{hud.score}</span>
-                        </div>
-                        <div className="hud-right">
-                            <button className="icon-btn" onClick={toggleAudio} aria-label="Toggle sound">
-                                <IconSound muted={muted} />
-                            </button>
-                            <button className="icon-btn" onClick={pause} aria-label="Pause">
-                                <IconPause />
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ---------- Companion dialogue bubble ---------- */}
-                {dialogue && playing && (
-                    <div className={`dialogue mood-${dialogue.mood || 'neutral'}`}>
-                        <span className="dialogue-speaker">{dialogue.speaker}</span>
-                        <span className="dialogue-text">{dialogue.text}</span>
-                    </div>
-                )}
-
-                {/* ---------- Repair prompt + progress ---------- */}
-                {playing && hud.canRepair && !hud.terminalFixed && (
-                    <div className="repair-prompt">
-                        {hud.repairProgress > 0 ? (
-                            <div className="repair-bar">
-                                <div className="repair-fill" style={{ width: `${hud.repairProgress}%` }} />
-                                <span>REBOOTING TERMINAL… {hud.repairProgress}%</span>
-                            </div>
-                        ) : (
-                            <span className="repair-hint">Hold REPAIR at the Central Terminal to reboot the grid</span>
-                        )}
-                    </div>
-                )}
-
-                {/* ---------- Mobile touch controls ---------- */}
-                {playing && (
-                    <div className="touch-controls">
-                        <div className="touch-pad">
-                            <button
-                                className="touch-btn"
-                                onPointerDown={(e) => { noGhost(e); moveDir(-1); }}
-                                onPointerUp={() => moveDir(0)}
-                                onPointerLeave={() => moveDir(0)}
-                                onPointerCancel={() => moveDir(0)}
-                                aria-label="Move left"
-                            >
-                                ◀
-                            </button>
-                            <button
-                                className="touch-btn"
-                                onPointerDown={(e) => { noGhost(e); moveDir(1); }}
-                                onPointerUp={() => moveDir(0)}
-                                onPointerLeave={() => moveDir(0)}
-                                onPointerCancel={() => moveDir(0)}
-                                aria-label="Move right"
-                            >
-                                ▶
-                            </button>
-                        </div>
-                        <div className="touch-actions">
-                            {hud.canRepair && !hud.terminalFixed && (
-                                <button
-                                    className="touch-btn repair-btn"
-                                    onPointerDown={(e) => { noGhost(e); repairPress(true); }}
-                                    onPointerUp={() => repairPress(false)}
-                                    onPointerLeave={() => repairPress(false)}
-                                    onPointerCancel={() => repairPress(false)}
-                                    aria-label="Repair"
-                                >
-                                    <IconWrench />
-                                </button>
-                            )}
-                            <button
-                                className="touch-btn jump-btn"
-                                onPointerDown={(e) => { noGhost(e); jumpPress(true); }}
-                                onPointerUp={() => jumpPress(false)}
-                                onPointerLeave={() => jumpPress(false)}
-                                onPointerCancel={() => jumpPress(false)}
-                                aria-label="Jump"
-                            >
-                                ▲
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ---------- MENU ---------- */}
-                {phase === 'MENU' && (
-                    <div className="overlay">
-                        <div className="panel">
-                            <p className="eyebrow">NEAR-FUTURE LAGOS · NIGERIA</p>
-                            <h1 className="title">
-                                EKO <span>REBOOT</span>
-                            </h1>
-                            <p className="tagline">Fix the City. Build the Future.</p>
-                            <p className="blurb">
-                                An Afrofuturistic repair adventure. Run, jump and double-jump across the Lagos Smart
-                                Market, recover the Energy Cells and Repair Parts, dodge rogue drones, and reboot the
-                                Central Terminal with your companion Kobo.
-                            </p>
-                            <button className="btn-primary" onClick={startMission}>
-                                START MISSION
-                            </button>
-                            <p className="hint">Desktop: A/D or ← → move · Space/W jump · E/F repair · P pause</p>
-                        </div>
-                    </div>
-                )}
-
-                {/* ---------- STORY INTRO ---------- */}
-                {phase === 'STORY_INTRO' && (
-                    <div className="overlay">
-                        <div className="panel">
-                            <p className="eyebrow">MISSION BRIEF</p>
-                            <h2 className="title-sm">The Grid is Failing</h2>
-                            <p className="blurb">
-                                Lagos' Smart Market powers millions. A cascade fault has knocked the Central Terminal
-                                offline. You are <strong>Tobi</strong>, a young inventor; your drone companion{' '}
-                                <strong>Kobo</strong> is with you. Gather <strong>6 Energy Cells</strong> and{' '}
-                                <strong>4 Repair Parts</strong> scattered across the rooftops and bridges, then reach
-                                the terminal to reboot the city's future.
-                            </p>
-                            <button className="btn-primary" onClick={startMission}>
-                                BEGIN MISSION
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ---------- PAUSED ---------- */}
-                {phase === 'PAUSED' && (
-                    <div className="overlay">
-                        <div className="panel">
-                            <h2 className="title-sm">Paused</h2>
-                            <p className="blurb">The market holds its breath.</p>
-                            <div className="btn-row">
-                                <button className="btn-primary" onClick={resume}>
-                                    <IconPlay /> RESUME
-                                </button>
-                                <button className="btn-ghost" onClick={restart}>
-                                    RESTART
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* ---------- GAME OVER ---------- */}
-                {phase === 'GAME_OVER' && (
-                    <div className="overlay">
-                        <div className="panel">
-                            <p className="eyebrow danger">SYSTEMS DOWN</p>
-                            <h2 className="title-sm">The Grid Went Dark</h2>
-                            <p className="blurb">
-                                Kobo kept the data: <strong>{hud.score}</strong> points, {hud.energyCells}/
-                                {hud.totalEnergyCells} cells, {hud.repairParts}/{hud.totalRepairParts} parts.
-                            </p>
-                            <button className="btn-primary" onClick={restart}>
-                                RETRY MISSION
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* ---------- MISSION COMPLETE ---------- */}
-                {phase === 'MISSION_COMPLETE' && (
-                    <div className="overlay">
-                        <div className="panel">
-                            <p className="eyebrow success">POWER RESTORED</p>
-                            <h2 className="title-sm">The Smart Market Lives Again</h2>
-                            <p className="blurb">
-                                You rebooted the Central Terminal. Final score:{' '}
-                                <strong>{hud.score}</strong>. Lagos shines brighter tonight.
-                            </p>
-                            <button className="btn-primary" onClick={restart}>
-                                PLAY AGAIN
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
+        return s + 1;
+      });
+    }, 22);
+    return () => window.clearInterval(id);
+  }, [line]);
+  return (
+    <div className="dlg-line">
+      <span className="dlg-speaker">{line.speaker}</span>
+      <span className="dlg-text">{line.text.slice(0, shown)}</span>
+    </div>
+  );
 }
 
-export default App;
+function DialogueBox({ lines, onDone, label }: { lines: Dialogue[]; onDone: () => void; label?: string }) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => setIdx(0), [lines]);
+  const last = idx >= lines.length - 1;
+  const advance = useCallback(() => { if (!last) setIdx(idx + 1); else onDone(); }, [last, idx, onDone]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "Enter" || e.code === "NumpadEnter") {
+        e.preventDefault();
+        advance();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [advance]);
+  const onDlgKey = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); advance(); }
+  };
+  return (
+    <div className="dlg-box" role="button" tabIndex={0} aria-label={last ? (label ?? "Continue") : "Next line"} onClick={advance} onKeyDown={onDlgKey}>
+      <Typewriter line={lines[idx]} />
+      <button className="dlg-next" onClick={(e) => { e.stopPropagation(); advance(); }}>
+        {last ? (label ?? "Continue") : "Next ▸"}
+      </button>
+    </div>
+  );
+}
+
+const IconSoundOn = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z" /></svg>
+);
+const IconSoundOff = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.8 8.8 0 0 0 21 12a9 9 0 0 0-7-8.77v2.06a7 7 0 0 1 0 13.42zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.9 8.9 0 0 0 3.66-1.87L19.73 21 21 19.73 4.27 3zM12 4 9.91 6.09 12 8.18V4z" /></svg>
+);
+const IconPause = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" /></svg>
+);
+
+export default function App() {
+  const phaserRef = useRef<IRefPhaserGame>({ game: null, scene: null });
+  const [phase, setPhase] = useState<GamePhase>("BOOT");
+  const [hud, setHud] = useState<HudState | null>(null);
+  const [save, setSave] = useState<SaveData>(() => loadSave());
+  const [result, setResult] = useState<MissionResult | null>(null);
+  const [introMission, setIntroMission] = useState<number | null>(null);
+  const [isTouch, setIsTouch] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const muteApplied = useRef(false);
+
+  useLayoutEffect(() => {
+    const game = StartGame("game-container");
+    phaserRef.current.game = game;
+    return () => {
+      if (phaserRef.current.game) phaserRef.current.game.destroy(true);
+      phaserRef.current.game = null;
+      phaserRef.current.scene = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0)) {
+      setIsTouch(true);
+    }
+    const onSceneReady = (scene: Phaser.Scene) => {
+      phaserRef.current.scene = scene;
+      // Apply persisted mute preference exactly once when the scene is ready.
+      if (!muteApplied.current) {
+        muteApplied.current = true;
+        if (save.soundMuted) EventBus.emit(EVT_TOGGLE_MUTE);
+      }
+    };
+    const onPhase = (p: GamePhase) => {
+      setPhase(p);
+      if (p === "PLAYING") { setIntroMission(null); setShowSettings(false); }
+    };
+    const onHud = (h: HudState) => setHud(h);
+    const onComplete = (r: MissionResult) => {
+      setResult(r);
+      setSave((prev) => {
+        const next: SaveData = {
+          completed: prev.completed.includes(r.mission) ? prev.completed : [...prev.completed, r.mission],
+          bestScores: { ...prev.bestScores, [r.mission]: Math.max(prev.bestScores[r.mission] ?? 0, r.score) },
+          totalImpact: prev.totalImpact + r.impact,
+          soundMuted: prev.soundMuted,
+        };
+        persistSave(next);
+        return next;
+      });
+    };
+    const onGameOver = () => setResult(null);
+    const onMuteState = (m: boolean) => {
+      setMuted(m);
+      setSave((prev) => {
+        const next: SaveData = { ...prev, soundMuted: m };
+        persistSave(next);
+        return next;
+      });
+    };
+    EventBus.on(EVT_CURRENT_SCENE_READY, onSceneReady);
+    EventBus.on(EVT_PHASE_CHANGED, onPhase);
+    EventBus.on(EVT_HUD, onHud);
+    EventBus.on(EVT_MISSION_COMPLETE, onComplete);
+    EventBus.on(EVT_GAME_OVER, onGameOver);
+    EventBus.on("mute-state", onMuteState);
+    setPhase("MENU");
+    return () => {
+      EventBus.off(EVT_CURRENT_SCENE_READY, onSceneReady);
+      EventBus.off(EVT_PHASE_CHANGED, onPhase);
+      EventBus.off(EVT_HUD, onHud);
+      EventBus.off(EVT_MISSION_COMPLETE, onComplete);
+      EventBus.off(EVT_GAME_OVER, onGameOver);
+      EventBus.off("mute-state", onMuteState);
+    };
+  }, [save.soundMuted]);
+
+  const startMission = (id: number) => {
+    setIntroMission(id);
+    setPhase("BRIEFING");
+  };
+
+  // Deploy: launch the selected mission immediately (sets React phase + starts the Phaser scene).
+  const launchScene = (id: number) => {
+    setIntroMission(null);
+    setResult(null);
+    setPhase("PLAYING");
+    EventBus.emit(EVT_START_MISSION, id);
+  };
+
+  const togglePause = () => {
+    if (phase === "PLAYING") {
+      setPhase("PAUSED");
+      EventBus.emit(EVT_PHASE_CHANGED, "PAUSED");
+    } else if (phase === "PAUSED") {
+      setPhase("PLAYING");
+      EventBus.emit(EVT_RESUME);
+    }
+  };
+
+  const toMenu = () => {
+    setResult(null);
+    setHud(null);
+    setShowSettings(false);
+    setPhase("MENU");
+    EventBus.emit(EVT_GO_TO_MENU);
+  };
+
+  const locked = (id: number) => id > 1 && !save.completed.includes(id - 1);
+  const impact = impactLevel(save.totalImpact);
+  const cellLabel = hud ? (MISSIONS[hud.mission - 1]?.cellLabel ?? "Cells") : "Cells";
+  const repairLabel = hud ? (MISSIONS[hud.mission - 1]?.repairLabel ?? "Repairs") : "Repairs";
+
+  const hold = (evt: string, down: boolean) => (e: RPointerEvent) => {
+    e.preventDefault();
+    const [name, arg] = evt.split("|");
+    if (arg !== undefined) EventBus.emit(name, arg, down);
+    else EventBus.emit(name, down);
+  };
+
+  const btn = (cls: string, txt: string, evt: string) => (
+    <button
+      className={`touch-btn ${cls}`}
+      onPointerDown={hold(evt, true)}
+      onPointerUp={hold(evt, false)}
+      onPointerCancel={hold(evt, false)}
+      onPointerLeave={hold(evt, false)}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {txt}
+    </button>
+  );
+
+  return (
+    <div id="app-shell">
+      <div id="game-container" />
+
+      {/* HUD — top-left stats, top-center objective, top-right controls (zero overlap) */}
+      {(phase === "PLAYING" || phase === "PAUSED") && hud && (
+        <div id="hud">
+          <div className="hud-left">
+            <div className="hud-score">{hud.score.toString().padStart(6, "0")}</div>
+            <div className="hud-hp" aria-label={`Health ${hud.hp} of 3`}>
+              {"♥".repeat(Math.max(0, hud.hp))}{"♡".repeat(Math.max(0, 3 - hud.hp))}
+            </div>
+            <div className="hud-counters">
+              <span className="hud-count">⚡ {cellLabel} {hud.cells}/{hud.cellsTotal}</span>
+              <span className="hud-count">🔧 {repairLabel} {hud.repairs}/{hud.repairsTotal}</span>
+            </div>
+          </div>
+          <div className="hud-center">
+            <div className="hud-mission">{MISSIONS[hud.mission - 1]?.name ?? "EKO"}</div>
+            <div className="hud-objective">{hud.objective}</div>
+            {hud.bossHp > 0 && (
+              <div className="boss-bar"><div className="boss-fill" style={{ width: `${(hud.bossHp / Math.max(1, hud.bossHpMax)) * 100}%` }} /></div>
+            )}
+          </div>
+          <div className="hud-right">
+            <button className="hud-btn icon-btn" aria-label={muted ? "Unmute sound" : "Mute sound"} onClick={() => EventBus.emit(EVT_TOGGLE_MUTE)}>
+              {muted ? <IconSoundOff /> : <IconSoundOn />}
+            </button>
+            <button className="hud-btn icon-btn" aria-label="Pause" onClick={togglePause}>
+              <IconPause />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MENU */}
+      {phase === "MENU" && (
+        <div className="overlay menu-overlay">
+          <div className="menu-grid">
+            <div className="menu-left">
+              <h1 className="title">EKO <span>REBOOT</span></h1>
+              <p className="subtitle">An Afro-Futuristic Platformer</p>
+              <div className="save-stats">
+                <div><span>Impact</span><b className={impact.cls}>{impact.label}</b></div>
+                <div><span>Districts</span><b>{save.completed.length}/3</b></div>
+                <div><span>Total Best</span><b>{Object.values(save.bestScores).reduce((a, b) => a + b, 0)}</b></div>
+              </div>
+              <DialogueBox lines={MENU_LINES} onDone={() => setPhase("MENU")} label="Select Mission ▸" />
+            </div>
+            <div className="mission-list">
+              {MISSIONS.map((m) => (
+                <button
+                  key={m.id}
+                  className={`mission-card ${locked(m.id) ? "locked" : ""}`}
+                  disabled={locked(m.id)}
+                  onClick={() => startMission(m.id)}
+                >
+                  <div className="mc-num">0{m.id}</div>
+                  <div className="mc-body">
+                    <div className="mc-name">{m.name}</div>
+                    <div className="mc-desc">{m.desc}</div>
+                    <div className="mc-meta">⚡{m.cells} 🔧{m.repairs} 🤖{m.drones}{m.boss ? "+BOSS" : ""} · {m.worldW / 1000}km</div>
+                  </div>
+                  <div className="mc-status">
+                    {locked(m.id) ? "🔒" : save.completed.includes(m.id) ? "✅" : "▶"}
+                    {save.bestScores[m.id] ? <em>{save.bestScores[m.id]}</em> : null}
+                  </div>
+                </button>
+              ))}
+              <button className="mission-card howto" onClick={() => setPhase("HOW_TO_PLAY")}>
+                <div className="mc-num">?</div>
+                <div className="mc-body"><div className="mc-name">How to Play</div><div className="mc-desc">Controls & tips</div></div>
+                <div className="mc-status">▶</div>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BRIEFING */}
+      {phase === "BRIEFING" && introMission !== null && (
+        <div className="overlay">
+          <div className="panel">
+            <h2>Mission {introMission} — {MISSIONS[introMission - 1].name}</h2>
+            <DialogueBox lines={MISSION_INTRO[introMission]} onDone={() => launchScene(introMission)} label="Deploy EKO ▸" />
+          </div>
+        </div>
+      )}
+
+      {/* HOW TO PLAY */}
+      {phase === "HOW_TO_PLAY" && (
+        <div className="overlay">
+          <div className="panel">
+            <h2>How to Play</h2>
+            <ul className="rules">
+              <li><b>A / D</b> or <b>← →</b> — run</li>
+              <li><b>SPACE / W / ↑</b> — jump (press again mid-air for double jump)</li>
+              <li><b>E / K</b> — repair station & interface with terminal</li>
+              <li><b>P / Esc</b> — pause</li>
+              <li><b>Stomp</b> drones from above to destroy them</li>
+              <li>Side contact costs 1 HP — you have 3</li>
+              <li>Energy bridges blink — cross while they glow</li>
+              <li>Touch: use the on-screen pad (left/right/jump/repair)</li>
+            </ul>
+            <button className="cta" onClick={() => setPhase("MENU")}>◂ Back</button>
+          </div>
+        </div>
+      )}
+
+      {/* PAUSED */}
+      {phase === "PAUSED" && (
+        <div className="overlay dim">
+          <div className="panel center">
+            {!showSettings ? (
+              <>
+                <h2>PAUSED</h2>
+                <button className="cta" onClick={togglePause}>RESUME</button>
+                <button className="cta secondary" onClick={() => { setPhase("PLAYING"); EventBus.emit(EVT_RESTART_MISSION); }}>RESTART MISSION</button>
+                <button className="cta secondary" onClick={toMenu}>MISSION SELECT</button>
+                <button className="cta secondary" onClick={() => setShowSettings(true)}>SETTINGS</button>
+              </>
+            ) : (
+              <>
+                <h2>SETTINGS</h2>
+                <button className="cta secondary" onClick={() => EventBus.emit(EVT_TOGGLE_MUTE)}>{muted ? "SOUND: OFF" : "SOUND: ON"}</button>
+                <ul className="rules" style={{ textAlign: "left" }}>
+                  <li><b>A / D / ← / →</b> — move</li>
+                  <li><b>SPACE / W / ↑</b> — jump & double jump</li>
+                  <li><b>E / K</b> — repair / interface</li>
+                  <li><b>P / Esc</b> — pause</li>
+                </ul>
+                <button className="cta" onClick={() => setShowSettings(false)}>◂ BACK</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* GAME OVER */}
+      {phase === "GAME_OVER" && (
+        <div className="overlay dim">
+          <div className="panel center">
+            <h2 className="danger">SYSTEM FAILURE</h2>
+            <p className="score-line">Score {hud?.score ?? 0}</p>
+            <button className="cta" onClick={() => { setPhase("PLAYING"); EventBus.emit(EVT_RESTART_MISSION); }}>RETRY MISSION</button>
+            <button className="cta secondary" onClick={toMenu}>MAIN MENU</button>
+          </div>
+        </div>
+      )}
+
+      {/* MISSION COMPLETE */}
+      {phase === "MISSION_COMPLETE" && result && (
+        <div className="overlay">
+          <div className="panel center">
+            <h2 className="success">DISTRICT REBOOTED</h2>
+            <p className="impact-line">+{result.impact} IMPACT — {impactLevel(save.totalImpact).label}</p>
+            <p className="score-line">Mission Score {result.score}</p>
+            {result.nextUnlocked && <p className="unlock-line">Next district unlocked!</p>}
+            <button className="cta" onClick={() => startMission(Math.min(3, result.mission + 1))}>NEXT MISSION ▸</button>
+            <button className="cta secondary" onClick={() => { setPhase("PLAYING"); EventBus.emit(EVT_RESTART_MISSION); }}>REPLAY</button>
+            <button className="cta secondary" onClick={toMenu}>MAIN MENU</button>
+          </div>
+        </div>
+      )}
+
+      {/* VICTORY */}
+      {phase === "VICTORY_CINEMATIC" && (
+        <div className="overlay victory">
+          <div className="panel center">
+            <h1 className="title small">EKO <span>REBOOT</span></h1>
+            <h2 className="success">LAGOS SMART CITY RESTORED</h2>
+            <DialogueBox lines={VICTORY_LINES} onDone={toMenu} label="Return to Menu ▸" />
+            <p className="score-line">Final Impact {save.totalImpact} · Total Best {Object.values(save.bestScores).reduce((a, b) => a + b, 0)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* TOUCH CONTROLS */}
+      {isTouch && (phase === "PLAYING") && (
+        <div id="touch-controls">
+          <div className="touch-left">
+            {btn("t-dir", "◀", EVT_SET_TOUCH + "|left")}
+            {btn("t-dir", "▶", EVT_SET_TOUCH + "|right")}
+          </div>
+          <div className="touch-right">
+            <button className="touch-btn t-act" aria-label="Repair" onPointerDown={(e) => { e.preventDefault(); EventBus.emit(EVT_ACTION, true); }} onPointerUp={(e) => { e.preventDefault(); EventBus.emit(EVT_ACTION, false); }} onPointerCancel={() => EventBus.emit(EVT_ACTION, false)} onPointerLeave={() => EventBus.emit(EVT_ACTION, false)}>⚡</button>
+            <button className="touch-btn t-jump" aria-label="Jump" onPointerDown={(e) => { e.preventDefault(); EventBus.emit(EVT_JUMP, true); }}>▲</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

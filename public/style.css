@@ -437,3 +437,81 @@ body,
 .icon-btn:active {
   transform: scale(0.94);
 }
+
+/* ===== App.tsx HUD & overlay classes ===== */
+#app-shell { position: relative; width: 100%; height: 100%; }
+#hud { position: absolute; inset: 0; pointer-events: none; z-index: 10; display: flex; justify-content: space-between; padding: 10px 14px; }
+.hud-left { display: flex; flex-direction: column; gap: 4px; }
+.hud-score { font-size: 22px; font-weight: 900; color: var(--gold); text-shadow: 0 2px 6px rgba(0,0,0,.6); }
+.hud-hp { font-size: 18px; color: #ff4466; }
+.hud-center { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.hud-mission { font-size: 13px; font-weight: 700; color: var(--teal); letter-spacing: 1px; }
+.hud-objective { font-size: 12px; color: #d7e6f2; opacity: .85; }
+.hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.hud-count { font-size: 14px; font-weight: 700; color: #eafcff; }
+.hud-btn { pointer-events: auto; padding: 4px 12px; font-size: 12px; font-weight: 700; border-radius: 6px; border: 1px solid var(--panel-border); background: var(--panel); color: #eafcff; cursor: pointer; }
+.boss-bar { width: 200px; height: 10px; background: rgba(0,0,0,.6); border-radius: 5px; border: 1px solid #ff2d55; overflow: hidden; margin-top: 4px; }
+.boss-fill { height: 100%; background: #ff2d55; transition: width .2s; }
+
+/* Menu */
+.menu-overlay { background: radial-gradient(circle at 50% 30%, rgba(20,30,60,.7), rgba(5,7,15,.95)); }
+.menu-grid { display: flex; gap: 30px; align-items: flex-start; flex-wrap: wrap; justify-content: center; max-width: 900px; width: 100%; }
+.menu-left { flex: 1; min-width: 280px; }
+.subtitle { color: var(--teal); font-style: italic; margin: 6px 0 14px; font-size: 15px; }
+.save-stats { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.save-stats div { display: flex; flex-direction: column; gap: 2px; }
+.save-stats span { font-size: 11px; color: rgba(215,230,242,.6); letter-spacing: 1px; }
+.save-stats b { font-size: 14px; }
+.imp-low { color: #aaa; } .imp-mid { color: var(--teal); } .imp-high { color: var(--gold); } .imp-max { color: #4fffc9; }
+.mission-list { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 280px; }
+.mission-card { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; cursor: pointer; text-align: left; color: #fff; transition: transform .15s; }
+.mission-card:hover:not(:disabled) { transform: scale(1.02); }
+.mission-card.locked { opacity: .45; cursor: not-allowed; }
+.mission-card.howto { border-style: dashed; }
+.mc-num { font-size: 22px; font-weight: 900; color: var(--gold); min-width: 30px; }
+.mc-body { flex: 1; }
+.mc-name { font-weight: 700; font-size: 14px; }
+.mc-desc { font-size: 12px; color: rgba(215,230,242,.7); }
+.mc-meta { font-size: 11px; color: var(--teal); margin-top: 2px; }
+.mc-status { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 16px; }
+.mc-status em { font-size: 11px; color: var(--gold); font-style: normal; }
+
+/* CTA buttons */
+.cta { display: block; width: 100%; margin: 8px 0; padding: 12px 20px; font-size: 15px; font-weight: 800; border: none; border-radius: 999px; cursor: pointer; background: linear-gradient(90deg, var(--gold), #ffb300); color: #05070f; }
+.cta.secondary { background: transparent; border: 2px solid var(--panel-border); color: #eafcff; }
+.cta:active { transform: scale(.96); }
+.panel.center { text-align: center; }
+.danger { color: var(--magenta); }
+.success { color: var(--gold); }
+.score-line { font-size: 16px; margin: 8px 0; color: #eafcff; }
+.impact-line { font-size: 14px; color: #4fffc9; }
+.unlock-line { font-size: 13px; color: var(--teal); }
+.overlay.dim { background: rgba(5,7,15,.85); }
+.overlay.victory { background: radial-gradient(circle at 50% 40%, rgba(20,60,40,.7), rgba(5,7,15,.95)); }
+.title.small { font-size: clamp(24px, 5vw, 36px); }
+
+/* Dialogue */
+.dlg-box { background: var(--panel); border: 1px solid var(--panel-border); border-left: 4px solid var(--teal); border-radius: 10px; padding: 12px 14px; margin-top: 12px; cursor: pointer; }
+.dlg-line { display: flex; gap: 8px; align-items: baseline; }
+.dlg-speaker { font-weight: 900; color: var(--gold); font-size: 12px; min-width: 36px; }
+.dlg-text { font-size: 13px; color: #f3fbff; line-height: 1.4; }
+.dlg-next { margin-top: 8px; padding: 4px 14px; font-size: 12px; font-weight: 700; border-radius: 6px; border: 1px solid var(--panel-border); background: transparent; color: var(--teal); cursor: pointer; }
+
+/* Rules list */
+.rules { list-style: none; text-align: left; margin: 12px 0; }
+.rules li { padding: 6px 0; font-size: 13px; color: #d7e6f2; border-bottom: 1px solid rgba(77,208,225,.15); }
+.rules b { color: var(--gold); }
+
+/* Touch controls (App.tsx) */
+#touch-controls { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; padding: 16px 18px calc(16px + env(safe-area-inset-bottom)); z-index: 20; pointer-events: none; }
+.touch-left, .touch-right { display: flex; gap: 10px; pointer-events: auto; }
+.touch-btn { width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--panel-border); background: rgba(11,16,32,.6); color: #eafcff; font-size: 22px; font-weight: 900; display: grid; place-items: center; cursor: pointer; touch-action: none; }
+.touch-btn:active { background: rgba(77,208,225,.35); transform: scale(.94); }
+.t-jump { border-color: var(--gold); color: var(--gold); width: 68px; height: 68px; }
+.t-act { border-color: var(--teal); color: var(--teal); }
+@media (hover: hover) and (pointer: fine) { #touch-controls { display: none; } }
+
+/* Mute button — 48px touch target, clear of the HUD counters */
+#mute-btn { position: absolute; top: 10px; right: 10px; z-index: 30; width: 48px; height: 48px; border-radius: 10px; border: 1px solid var(--panel-border); background: var(--panel); color: #eafcff; font-size: 20px; cursor: pointer; display: grid; place-items: center; }
+#mute-btn:active { transform: scale(.92); background: rgba(77,208,225,.25); }
+.dlg-box:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
