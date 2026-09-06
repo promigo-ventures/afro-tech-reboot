@@ -401,8 +401,13 @@ export class Game extends Scene {
 
     const bgKey = m.id === 2 ? "bg_solar" : m.id === 3 ? "bg_water" : "bg_market";
     if (this.textures.exists(bgKey)) {
-      const art = this.add.tileSprite(0, 0, m.worldW, GH, bgKey).setOrigin(0, 0).setScrollFactor(0.22).setDepth(-5).setAlpha(0.55);
-      art.setTileScale(GH / Math.max(1, this.textures.get(bgKey).getSourceImage().height));
+      try {
+        const src = this.textures.get(bgKey).getSourceImage() as HTMLImageElement;
+        const art = this.add.tileSprite(0, 0, m.worldW, GH, bgKey).setOrigin(0, 0).setScrollFactor(0.22).setDepth(-5).setAlpha(0.55);
+        if (src && src.height) art.setTileScale(GH / src.height);
+      } catch {
+        this.add.image(m.worldW / 2, GH / 2, bgKey).setScrollFactor(0.22).setDepth(-5).setAlpha(0.4).setDisplaySize(GW, GH);
+      }
     }
     if (m.id === 3) {
       this.waterGfx = this.add.graphics().setDepth(2);
